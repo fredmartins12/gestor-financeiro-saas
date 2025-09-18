@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel de Gestão Financeira</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background-color: rgba(0, 0, 0, 0.5); display: none; align-items: center; justify-content: center; z-index: 1000; transition: opacity 0.3s ease; }
+        .modal-overlay.flex { display: flex; }
+        .modal-content { background-color: white; padding: 2rem; border-radius: 0.5rem; box-shadow: 0 10px 25px rgba(0,0,0,0.1); width: 90%; max-width: 600px; }
+        .action-btn { cursor: pointer; font-weight: 500; }
+        .edit-btn { color: #4f46e5; } .edit-btn:hover { text-decoration: underline; }
+        .delete-btn { color: #dc2626; } .delete-btn:hover { text-decoration: underline; }
+
+        #toast-container { position: fixed; top: 1.5rem; right: 1.5rem; z-index: 2000; display: flex; flex-direction: column; gap: 0.75rem; }
+        .toast { padding: 1rem 1.5rem; border-radius: 0.5rem; color: white; font-semibold; box-shadow: 0 4px 12px rgba(0,0,0,0.15); opacity: 0; transform: translateX(100%); animation: slideIn 0.5s forwards, fadeOut 0.5s 4.5s forwards; }
+        .toast.success { background-color: #10b981; }
+        .toast.error { background-color: #ef4444; }
+        @keyframes slideIn { to { opacity: 1; transform: translateX(0); } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; transform: translateX(100%); } }
+
+        .spinner { border: 2px solid rgba(0,0,0,0.1); border-top: 2px solid #4f46e5; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+        .spinner.mx-auto { border-top-color: #fff; width: 16px; height: 16px;}
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        .operation-body { max-height: 0; overflow: hidden; transition: max-height 0.4s ease-out, opacity 0.2s ease-out; opacity: 0; visibility: hidden; }
+        .is-expanded .operation-body { max-height: 2000px; opacity: 1; visibility: visible; transition: max-height 0.5s ease-in, opacity 0.3s 0.1s ease-in; }
+        .toggle-icon { transition: transform 0.3s ease; }
+        .is-expanded .toggle-icon { transform: rotate(180deg); }
+
+        .tab-btn { padding: 0.5rem 1rem; border-radius: 0.375rem; border: 1px solid transparent; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .tab-btn.active { background-color: #4f46e5; color: white; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .tab-btn:not(.active) { background-color: #e5e7eb; color: #4b5563; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* Estilos para os botões e tags na lista de contas */
+        .status-tag { padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; display: inline-flex; align-items: center; gap: 0.25rem; }
+        .tag-deposit { background-color: #fef9c3; color: #ca8a04; border: 1px solid #fde047; }
+        .tag-paid { color: #166534; }
+        .tag-due { color: #b45309; }
+        .tag-overdue { color: #991b1b; }
+        .pay-btn { cursor: pointer; color: #4f46e5; font-weight: 500; margin-left: 8px; }
+        .pay-btn:hover { text-decoration: underline; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 p-4 sm:p-6 md:p-8">
+
+    <div id="toast-container"></div>
+
+    <div id="account-modal" class="modal-overlay">
+        <div class="modal-content w-full max-w-md">
+            <h3 id="modal-title" class="text-xl font-bold mb-6">Cadastrar Nova Conta</h3>
+            <form id="account-form" class="space-y-4 text-left">
+                <input type="hidden" id="account-id" name="account-id">
+                <div><label for="account-name" class="block text-sm font-medium text-gray-700">Nome</label><input type="text" id="account-name" name="account-name" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required></div>
+                
+                <div>
+                    <label for="account-provider" class="block text-sm font-medium text-gray-700">Casa de Aposta</label>
+                    <select id="account-provider" name="account-provider" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
+                        <option value="">Selecione...</option>
+                        <option value="bet365">Bet365</option>
+                        <option value="betesporte">BetEsporte</option>
+                        <option value="betano">Betano</option>
+                        <option value="sportingbet">Sportingbet</option>
+                        <option value="pessoal">Pessoal (Conta não relacionada a apostas)</option>
+                    </select>
+                </div>
+
+                <div><label for="account-balance" class="block text-sm font-medium text-gray-700">Saldo (R$)</label><input type="number" id="account-balance" name="account-balance" step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"></div>
+                <div><label for="account-freebet-balance" class="block text-sm font-medium text-gray-700">Saldo de Freebets (R$)</label><input type="number" id="account-freebet-balance" name="account-freebet-balance" step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"></div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div><label for="account-payment-day" class="block text-sm font-medium text-gray-700">Dia do Pgto. (1-31)</label><input type="number" id="account-payment-day" name="account-payment-day" min="1" max="31" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"></div>
+                    <div><label for="account-payment-value" class="block text-sm font-medium text-gray-700">Valor do Pgto. (R$)</label><input type="number" id="account-payment-value" name="account-payment-value" step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"></div>
+                </div>
+                <div><label for="account-goal" class="block text-sm font-medium text-gray-700">Meta do Clube (R$)</label><input type="number" id="account-goal" name="account-goal" step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" value="100"></div>
+                <div><label for="account-club-volume" class="block text-sm font-medium text-gray-700">Volume Válido (Inicial)</label><input type="number" id="account-club-volume" name="account-club-volume" step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"></div>
+                <div><label for="account-last-code-date" class="block text-sm font-medium text-gray-700">Data do Último Código</label><input type="date" id="account-last-code-date" name="account-last-code-date" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"></div>
+                <div><label for="account-obs" class="block text-sm font-medium text-gray-700">Observações</label><textarea id="account-obs" name="account-obs" rows="3" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"></textarea></div>
+                <div class="pt-4 flex justify-end gap-4"><button type="button" class="cancel-modal-btn bg-gray-200 text-gray-800 py-2 px-4 rounded-md">Cancelar</button><button type="submit" class="bg-indigo-600 text-white py-2 px-4 rounded-md w-24 flex justify-center">Salvar</button></div>
+            </form>
+        </div>
+    </div>
+    
+    <div id="transaction-modal" class="modal-overlay">
+        <div class="modal-content w-full max-w-md">
+            <h3 class="text-xl font-bold mb-6">Lançamento Externo</h3>
+            <form id="transaction-form" class="space-y-4 text-left">
+                <div><label for="transaction-account" class="block text-sm font-medium text-gray-700">Conta</label><select id="transaction-account" name="transaction-account" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required></select></div>
+                <div><label for="transaction-type" class="block text-sm font-medium text-gray-700">Tipo</label><select id="transaction-type" name="transaction-type" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required><option value="deposit">Depósito Externo (Crédito)</option><option value="withdrawal">Saque Externo (Débito)</option><option value="payment">Pagamento (Débito)</option><option value="bonus">Bônus (Crédito)</option><option value="other_debit">Outro Débito</option><option value="other_credit">Outro Crédito</option></select></div>
+                <div><label for="transaction-amount" class="block text-sm font-medium text-gray-700">Valor (R$)</label><input type="number" step="0.01" id="transaction-amount" name="transaction-amount" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required></div>
+                <div><label for="transaction-description" class="block text-sm font-medium text-gray-700">Descrição</label><input type="text" id="transaction-description" name="transaction-description" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required></div>
+                <div class="pt-4 flex justify-end gap-4"><button type="button" class="cancel-modal-btn bg-gray-200 text-gray-800 py-2 px-4 rounded-md">Cancelar</button><button type="submit" class="bg-indigo-600 text-white py-2 px-4 rounded-md w-28 flex justify-center">Salvar</button></div>
+            </form>
+        </div>
+    </div>
+    
+    <div id="transfer-modal" class="modal-overlay">
+        <div class="modal-content w-full max-w-md">
+            <h3 class="text-xl font-bold mb-6">Transferência Entre Contas</h3>
+            <form id="transfer-form" class="space-y-4 text-left">
+                <div><label for="transfer-from" class="block text-sm font-medium text-gray-700">Conta de Origem</label><select id="transfer-from" name="transfer-from" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required></select></div>
+                <div><label for="transfer-to" class="block text-sm font-medium text-gray-700">Conta de Destino</label><select id="transfer-to" name="transfer-to" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required></select></div>
+                <div><label for="transfer-amount" class="block text-sm font-medium text-gray-700">Valor (R$)</label><input type="number" step="0.01" id="transfer-amount" name="transfer-amount" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required></div>
+                <div><label for="transfer-description" class="block text-sm font-medium text-gray-700">Descrição</label><input type="text" id="transfer-description" name="transfer-description" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"></div>
+                <div class="pt-4 flex justify-end gap-4"><button type="button" class="cancel-modal-btn bg-gray-200 text-gray-800 py-2 px-4 rounded-md">Cancelar</button><button type="submit" class="bg-indigo-600 text-white py-2 px-4 rounded-md w-32 flex justify-center">Iniciar Transferência</button></div>
+            </form>
+        </div>
+    </div>
+
+    <div id="report-modal" class="modal-overlay">
+        <div class="modal-content w-full max-w-4xl">
+            <div class="flex justify-between items-center mb-6">
+                <h3 class="text-xl font-bold">Dashboard de Relatórios</h3>
+                <div class="flex items-center gap-2">
+                    <label for="report-month" class="text-sm font-medium">Período:</label>
+                    <select id="report-month" class="rounded-md border-gray-300 shadow-sm"></select>
+                    <select id="report-year" class="rounded-md border-gray-300 shadow-sm"></select>
+                </div>
+            </div>
+            <div id="report-content" class="max-h-[70vh] overflow-y-auto bg-gray-50 p-4 rounded-lg">
+                </div>
+            <div class="pt-4 mt-4 border-t flex justify-end">
+                <button type="button" class="cancel-modal-btn bg-gray-200 text-gray-800 py-2 px-4 rounded-md">Fechar</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="expense-modal" class="modal-overlay">
+        <div class="modal-content w-full max-w-md">
+            <h3 class="text-xl font-bold mb-6">Registrar Gasto Pessoal</h3>
+            <form id="expense-form" class="space-y-4 text-left">
+                <div>
+                    <label for="expense-account" class="block text-sm font-medium text-gray-700">Conta de Origem (Caixa)</label>
+                    <select id="expense-account" name="expense-account" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required></select>
+                </div>
+                <div>
+                    <label for="expense-amount" class="block text-sm font-medium text-gray-700">Valor do Gasto (R$)</label>
+                    <input type="number" step="0.01" id="expense-amount" name="expense-amount" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required>
+                </div>
+                <div>
+                    <label for="expense-description" class="block text-sm font-medium text-gray-700">Descrição / Categoria</label>
+                    <input type="text" id="expense-description" name="expense-description" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" placeholder="Ex: Conta de Luz, Supermercado" required>
+                </div>
+                <div class="pt-4 flex justify-end gap-4">
+                    <button type="button" class="cancel-modal-btn bg-gray-200 text-gray-800 py-2 px-4 rounded-md">Cancelar</button>
+                    <button type="submit" class="bg-rose-600 text-white py-2 px-4 rounded-md w-28 flex justify-center">Registrar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <div class="max-w-screen-xl mx-auto">
+        <header class="mb-8 flex justify-between items-center">
+            <div>
+                <h1 class="text-4xl font-bold text-gray-900">Painel de Gestão Financeira</h1>
+                <p class="text-gray-600 mt-1">Controle suas contas, operações e finanças em um só lugar.</p>
+            </div>
+            <a href="/logout" class="bg-red-500 text-white py-2 px-4 rounded-md hover:bg-red-600 font-semibold">Sair</a>
+        </header>
+
+        <div class="mb-10">
+            <div class="flex justify-between items-center mb-4 flex-wrap gap-4">
+                <h2 class="text-2xl font-bold text-gray-800">Painel de Contas</h2>
+                <div class="flex gap-4 flex-wrap">
+                    <button id="report-btn" class="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 font-semibold">Relatórios</button>
+                    <button id="transfer-btn" class="bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 font-semibold">Transferência</button>
+                    <button id="add-expense-btn" class="bg-rose-600 text-white py-2 px-4 rounded-md hover:bg-rose-700 font-semibold">Registrar Gasto</button>
+                    <button id="add-transaction-btn" class="bg-gray-500 text-white py-2 px-4 rounded-md hover:bg-gray-600 font-semibold">Lançamento Externo</button>
+                    <button id="add-account-btn" class="bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 font-semibold">+ Nova Conta</button>
+                </div>
+            </div>
+
+            <div class="mb-4 flex items-center gap-2 flex-wrap" id="main-tabs-container">
+                <button class="tab-btn active" data-tab="bet365">Bet365</button>
+                <button class="tab-btn" data-tab="betesporte">BetEsporte</button>
+                <button class="tab-btn" data-tab="betano">Betano</button>
+                <button class="tab-btn" data-tab="sportingbet">Sportingbet</button>
+                <button class="tab-btn" data-tab="personal">Contas Pessoais</button>
+            </div>
+
+            <div id="tab-content-bet365" class="tab-content active">
+                <div class="bg-white shadow-md rounded-lg overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm text-left text-gray-600">
+                            <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                                <tr class="betting-accounts-header">
+                                    <th class="px-6 py-3">Status</th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="nome">Nome <span></span></th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="saldo">Saldo (R$) <span></span></th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="saldoFreebets">Freebets (R$) <span></span></th>
+                                    <th class="px-6 py-3">Clube (Progresso)</th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="proxPgto">Próximo Pgto. <span></span></th>
+                                    <th class="px-6 py-3">Observações</th>
+                                    <th class="px-6 py-3">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody class="accounts-table-body" id="bet365-accounts-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-content-betesporte" class="tab-content">
+                 <div class="bg-white shadow-md rounded-lg overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm text-left text-gray-600">
+                            <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                                <tr class="betting-accounts-header">
+                                    <th class="px-6 py-3">Status</th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="nome">Nome <span></span></th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="saldo">Saldo (R$) <span></span></th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="saldoFreebets">Freebets (R$) <span></span></th>
+                                    <th class="px-6 py-3">Clube (Progresso)</th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="proxPgto">Próximo Pgto. <span></span></th>
+                                    <th class="px-6 py-3">Observações</th>
+                                    <th class="px-6 py-3">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody class="accounts-table-body" id="betesporte-accounts-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+             <div id="tab-content-betano" class="tab-content">
+                 <div class="bg-white shadow-md rounded-lg overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm text-left text-gray-600">
+                            <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                                <tr class="betting-accounts-header">
+                                    <th class="px-6 py-3">Status</th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="nome">Nome <span></span></th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="saldo">Saldo (R$) <span></span></th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="saldoFreebets">Freebets (R$) <span></span></th>
+                                    <th class="px-6 py-3">Clube (Progresso)</th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="proxPgto">Próximo Pgto. <span></span></th>
+                                    <th class="px-6 py-3">Observações</th>
+                                    <th class="px-6 py-3">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody class="accounts-table-body" id="betano-accounts-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div id="tab-content-sportingbet" class="tab-content">
+                 <div class="bg-white shadow-md rounded-lg overflow-hidden">
+                     <div class="overflow-x-auto">
+                         <table class="w-full text-sm text-left text-gray-600">
+                             <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                                 <tr class="betting-accounts-header">
+                                     <th class="px-6 py-3">Status</th>
+                                     <th class="px-6 py-3 cursor-pointer" data-sort="nome">Nome <span></span></th>
+                                     <th class="px-6 py-3 cursor-pointer" data-sort="saldo">Saldo (R$) <span></span></th>
+                                     <th class="px-6 py-3 cursor-pointer" data-sort="saldoFreebets">Freebets (R$) <span></span></th>
+                                     <th class="px-6 py-3">Clube (Progresso)</th>
+                                     <th class="px-6 py-3 cursor-pointer" data-sort="proxPgto">Próximo Pgto. <span></span></th>
+                                     <th class="px-6 py-3">Observações</th>
+                                     <th class="px-6 py-3">Ações</th>
+                                 </tr>
+                             </thead>
+                             <tbody class="accounts-table-body" id="sportingbet-accounts-body"></tbody>
+                         </table>
+                     </div>
+                 </div>
+            </div>
+
+            <div id="tab-content-personal" class="tab-content">
+                   <div class="bg-white shadow-md rounded-lg overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-sm text-left text-gray-600">
+                            <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                                <tr id="personal-accounts-header">
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="nome">Nome <span></span></th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="saldo">Saldo (R$) <span></span></th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="saldoFreebets">Freebets (R$) <span></span></th>
+                                    <th class="px-6 py-3 cursor-pointer" data-sort="proxPgto">Próximo Pgto. <span></span></th>
+                                    <th class="px-6 py-3">Observações</th>
+                                    <th class="px-6 py-3">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody class="accounts-table-body" id="personal-accounts-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="mb-10">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">Resumo Financeiro</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-center">
+                <div class="bg-white shadow-md rounded-lg p-4"><h4 class="text-sm font-semibold text-gray-500">SALDO CONTAS PESSOAIS</h4><p id="personal-balance" class="text-2xl font-bold text-indigo-600">R$ 0,00</p></div>
+                <div class="bg-white shadow-md rounded-lg p-4"><h4 class="text-sm font-semibold text-gray-500">SALDO CASAS DE APOSTA</h4><p id="betting-houses-balance" class="text-2xl font-bold text-blue-600">R$ 0,00</p></div>
+                <div class="bg-white shadow-md rounded-lg p-4"><h4 class="text-sm font-semibold text-gray-500">TOTAL EM FREEBETS</h4><p id="total-freebets-balance" class="text-2xl font-bold text-purple-600">R$ 0,00</p></div>
+                <div class="bg-white shadow-md rounded-lg p-4"><h4 class="text-sm font-semibold text-gray-500">SALDO TOTAL GERAL</h4><p id="total-balance" class="text-2xl font-bold text-gray-800">R$ 0,00</p></div>
+                <div class="bg-white shadow-md rounded-lg p-4"><h4 class="text-sm font-semibold text-gray-500">ENTRADAS (MÊS)</h4><p id="monthly-credits" class="text-2xl font-bold text-green-600">R$ 0,00</p></div>
+                <div class="bg-white shadow-md rounded-lg p-4"><h4 class="text-sm font-semibold text-gray-500">SAÍDAS (MÊS)</h4><p id="monthly-debits" class="text-2xl font-bold text-red-600">R$ 0,00</p></div>
+                <div class="bg-white shadow-md rounded-lg p-4 col-span-1 md:col-span-2 lg:col-span-2"><h4 class="text-sm font-semibold text-gray-500">LUCRO / PREJUÍZO (MÊS)</h4><p id="monthly-net" class="text-2xl font-bold text-gray-800">R$ 0,00</p></div>
+            </div>
+        </div>
+
+        <div class="mb-10">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">Operações Ativas</h2>
+            <div id="active-operations-container" class="space-y-4"></div>
+        </div>
+
+        <div class="mb-10">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">Registrar Operação de Aposta</h2>
+            <div class="bg-white shadow-md rounded-lg p-6">
+                <form id="operation-form">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 border-b pb-6">
+                        <div><label for="operation-game-name" class="block text-sm font-medium text-gray-700">Jogo/Evento Principal</label><input type="text" id="operation-game-name" name="operation-game-name" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" placeholder="Ex: Palmeiras vs. Flamengo" required></div>
+                        <div><label for="operation-category" class="block text-sm font-medium text-gray-700">Categoria</label><select id="operation-category" name="operation-category" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"><option value="esportiva">Aposta Esportiva</option><option value="surebet">Surebet / Arbitragem</option><option value="processo_freebet">PROCESSO PARA ADQUIRIR FREEBET</option><option value="extracao_freebet">Extração de Freebet</option><option value="extracao_moedas">Extração de Moedas</option><option value="cassino">Cassino (Lanç. Imediato)</option><option value="outro">Outro</option></select></div>
+                    </div>
+                    
+                    <div id="multi-bet-container">
+                        <div class="flex justify-between items-center mb-4 flex-wrap gap-4">
+                            <h3 class="text-lg font-semibold text-gray-900">Pernas da Operação</h3>
+                            <div class="flex items-center gap-4">
+                                <div>
+                                    <label for="account-filter-provider" class="text-sm font-medium text-gray-600">Filtrar Contas por Casa:</label>
+                                    <select id="account-filter-provider" class="text-sm rounded-md border-gray-300 shadow-sm ml-2">
+                                        <option value="all">Todas</option>
+                                        <option value="bet365">Bet365</option>
+                                        <option value="betesporte">BetEsporte</option>
+                                        <option value="betano">Betano</option>
+                                        <option value="sportingbet">Sportingbet</option>
+                                    </select>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-sm font-medium text-gray-600">Ordenar por:</span>
+                                    <button type="button" id="sort-alpha-btn" class="text-xs bg-gray-200 py-1 px-2 rounded-md font-semibold">A-Z</button>
+                                    <button type="button" id="sort-balance-btn" class="text-xs bg-gray-200 py-1 px-2 rounded-md font-semibold">Saldo</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="legs-container" class="space-y-6"></div>
+                        <div class="mt-6">
+                            <button type="button" id="add-leg-btn" class="bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 font-semibold">+ Adicionar Perna (Novo Resultado)</button>
+                        </div>
+                    </div>
+
+                    <div id="cassino-container" class="hidden"><h3 class="text-lg font-semibold text-gray-900 mb-4">Lançamento de Cassino</h3><div class="space-y-4"><div><label class="block text-sm font-medium text-gray-700">Conta</label><select id="cassino-account" name="cassino-account" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"></select></div><div class="grid grid-cols-2 gap-4"><div><label class="block text-sm font-medium text-gray-700">Valor Investido (R$)</label><input type="number" step="0.01" id="cassino-stake" name="cassino-stake" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm" required></div><div><label class="block text-sm font-medium text-gray-700">Retorno Obtido (R$)</label><input type="number" step="0.01" id="cassino-return" name="cassino-return" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm"></div></div></div></div>
+                    <div class="mt-6 border-t pt-6"><button type="submit" class="w-full bg-indigo-600 text-white py-2 px-6 rounded-md hover:bg-indigo-700 font-bold text-lg flex items-center justify-center">Registrar Operação</button></div>
+                </form>
+            </div>
+        </div>
+        
+        <div class="mb-10">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">Histórico de Transações Recentes</h2>
+            <div class="bg-white shadow-md rounded-lg overflow-hidden"><div class="overflow-x-auto"><table class="w-full text-sm text-left text-gray-600"><thead class="text-xs text-gray-700 uppercase bg-gray-50"><tr><th class="px-6 py-3">Data</th><th class="px-6 py-3">Conta</th><th class="px-6 py-3">Descrição</th><th class="px-6 py-3">Tipo</th><th class="px-6 py-3">Valor (R$)</th><th class="px-6 py-3">Ação</th></tr></thead><tbody id="transactions-history-body"></tbody></table></div></div>
+        </div>
+
+        <div class="mb-10">
+            <h2 class="text-2xl font-bold text-gray-800 mb-4">Ferramentas de Dados</h2>
+            <div class="bg-white shadow-md rounded-lg p-6"><div class="grid grid-cols-1 md:grid-cols-3 gap-8"><div class="border-r pr-8"><h3 class="text-lg font-semibold text-gray-900 mb-2">Fazer Backup</h3><p class="text-sm text-gray-600 mb-4">Baixe um arquivo (.json) com todos os seus dados.</p><button id="backup-btn" class="bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 font-semibold flex items-center justify-center w-36">Baixar Backup</button></div><div class="border-r pr-8"><h3 class="text-lg font-semibold text-gray-900 mb-2">Restaurar Backup</h3><p class="text-sm text-gray-600 mb-4"><strong class="text-red-600">Atenção:</strong> Irá apagar todos os dados atuais.</p><input type="file" id="restore-file-input" accept=".json" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-violet-50 file:text-violet-700 hover:file:bg-violet-100"/><button id="restore-btn" class="mt-4 bg-red-600 text-white py-2 px-4 rounded-md hover:bg-red-700 font-semibold disabled:bg-gray-400 w-36 flex justify-center" disabled>Restaurar Dados</button></div><div><h3 class="text-lg font-semibold text-gray-900 mb-2">Importar Contas via CSV</h3><p class="text-sm text-gray-600 mb-4">Crie ou atualize múltiplas contas de uma planilha. <button id="download-template-btn" class="text-blue-600 hover:underline">Baixe o modelo</button>.</p><input type="file" id="csv-file-input" accept=".csv" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"/><button id="import-csv-btn" class="mt-4 bg-green-600 text-white py-2 px-4 rounded-md hover:bg-green-700 font-semibold disabled:bg-green-400 w-36 flex justify-center" disabled>Importar CSV</button></div></div></div>
+        </div>
+
+    </div>
+
+    <script src="/static/main.js"></script>
+</body>
+</html>
