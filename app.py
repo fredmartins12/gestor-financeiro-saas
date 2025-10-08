@@ -119,7 +119,7 @@ def get_dados_iniciais():
     user_id = get_current_user_id()
     db = get_db()
     with db.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-        cursor.execute("SELECT * FROM contas WHERE user_id = %s AND ativa = 1 ORDER BY nome", (user_id,))
+        cursor.execute("SELECT * FROM contas WHERE user_id = %s AND ativa = TRUE ORDER BY nome", (user_id,))
         contas = cursor.fetchall()
 
         cursor.execute("SELECT t.*, c.nome as nome_conta FROM transacoes t JOIN contas c ON t.conta_id = c.id WHERE t.user_id = %s AND t.tipo = 'bet_placed' AND t.detalhes->>'status' = 'ativa'", (user_id,))
