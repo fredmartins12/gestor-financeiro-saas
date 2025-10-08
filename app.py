@@ -477,6 +477,16 @@ def csv_template():
         mimetype="text/csv",
         headers={"Content-disposition": "attachment; filename=modelo_contas.csv"}
     )
+# ROTA TEMPORÁRIA PARA CRIAR AS TABELAS NO BANCO DE DADOS
+# DEPOIS DE USAR, ESTA ROTA DEVE SER REMOVIDA
+@app.route('/cria_banco_de_dados_secreto')
+def cria_banco_de_dados():
+    db = get_db()
+    with db.cursor() as cursor:
+        with open('schema.sql', 'r') as f:
+            cursor.execute(f.read())
+    db.commit()
+    return "Banco de dados e tabelas criados com sucesso!"
 
 if __name__ == '__main__':
     app.run(debug=True)
