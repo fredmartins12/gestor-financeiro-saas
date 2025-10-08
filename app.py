@@ -1,6 +1,6 @@
 import os
 import psycopg2
-import psycopg2.extras # Essencial para retornar linhas como dicionários
+import psycopg2.extras  # Essencial para retornar linhas como dicionários
 import json
 import csv
 import io
@@ -11,16 +11,15 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, curren
 
 # --- Configuração Inicial ---
 app = Flask(__name__)
-# A chave secreta agora é lida do ambiente, com um valor padrão para testes locais
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', '564312')
-DATABASE_URL = os.environ.get('DATABASE_URL') # Pega a URL do banco de dados do ambiente do Render
+DATABASE_URL = os.environ.get('DATABASE_URL')  # URL do PostgreSQL no ambiente
 
 # --- Configuração do Flask-Login ---
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# --- Conexão com o Banco de Dados (PostgreSQL) ---
+# --- Conexão com o Banco de Dados ---
 def get_db():
     db = getattr(g, '_database', None)
     if db is None:
@@ -33,7 +32,7 @@ def close_connection(exception):
     if db is not None:
         db.close()
 
-# --- Modelo de Usuário para o Flask-Login ---
+# --- Modelo de Usuário ---
 class User(UserMixin):
     def __init__(self, id, email):
         self.id = id
@@ -59,7 +58,6 @@ def login():
         with get_db().cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
             cursor.execute("SELECT * FROM usuarios WHERE email = %s", (email,))
             user_row = cursor.fetchone()
-        
         if user_row and check_password_hash(user_row['senha_hash'], password):
             user = User(id=user_row['id'], email=user_row['email'])
             login_user(user)
@@ -79,15 +77,12 @@ def register():
         with db.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
             cursor.execute("SELECT id FROM usuarios WHERE email = %s", (email,))
             user_row = cursor.fetchone()
-
             if user_row:
                 flash('Este email já está cadastrado.', 'error')
                 return redirect(url_for('register'))
-            
             if len(password) < 8:
                 flash('A senha deve ter no mínimo 8 caracteres.', 'error')
                 return redirect(url_for('register'))
-
             password_hash = generate_password_hash(password, method='pbkdf2:sha256')
             cursor.execute("INSERT INTO usuarios (email, senha_hash) VALUES (%s, %s)", (email, password_hash))
         db.commit()
@@ -101,42 +96,35 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
-# --- Rota Principal da Aplicação ---
+# --- Rota Principal ---
 @app.route('/')
 @login_required
 def index():
     return render_template('index.html')
 
-# --- Função de Autenticação para a API ---
+# --- Função de Usuário Atual ---
 def get_current_user_id():
     return current_user.id
 
-# --- API Endpoints (Protegidos) ---
-
+# --- API Endpoints ---
 @app.route('/api/dados-iniciais', methods=['GET'])
 @login_required
 def get_dados_iniciais():
     user_id = get_current_user_id()
     db = get_db()
     with db.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-        cursor.execute("SELECT * FROM contas WHERE user_id = %s AND ativa = 1 ORDER BY nome", (user_id,))
+        cursor.execute("SELECT * FROM contas WHERE user_id = %s AND ativa = TRUE ORDER BY nome", (user_id,))
         contas = cursor.fetchall()
-
         cursor.execute("SELECT t.*, c.nome as nome_conta FROM transacoes t JOIN contas c ON t.conta_id = c.id WHERE t.user_id = %s AND t.tipo = 'bet_placed' AND t.detalhes->>'status' = 'ativa'", (user_id,))
         operacoes_ativas = cursor.fetchall()
-
         cursor.execute("SELECT t.*, c.nome as nome_conta FROM transacoes t JOIN contas c ON t.conta_id = c.id WHERE t.user_id = %s ORDER BY t.data_criacao DESC LIMIT 30", (user_id,))
         historico = cursor.fetchall()
-
         now = datetime.now()
         start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        
         cursor.execute("SELECT SUM(CASE WHEN valor > 0 THEN valor ELSE 0 END) as entradas, SUM(CASE WHEN valor < 0 THEN valor ELSE 0 END) as saidas FROM transacoes WHERE user_id = %s AND data_criacao >= %s AND tipo NOT IN ('bet_placed', 'bet_won')", (user_id, start_of_month))
         resumo_mes_transacoes = cursor.fetchone()
-
         cursor.execute("SELECT SUM(valor) as lucro_prejuizo FROM transacoes WHERE user_id = %s AND data_criacao >= %s AND tipo IN ('bet_placed', 'bet_won')", (user_id, start_of_month))
         lucro_prejuizo_mes = cursor.fetchone()['lucro_prejuizo'] or 0
-
     return jsonify({
         'contas': [dict(row) for row in contas], 
         'operacoesAtivas': [dict(row) for row in operacoes_ativas], 
@@ -177,7 +165,7 @@ def deactivate_conta(conta_id):
     user_id = get_current_user_id()
     db = get_db()
     with db.cursor() as cursor:
-        cursor.execute("UPDATE contas SET ativa = 0 WHERE id = %s AND user_id = %s", (conta_id, user_id))
+        cursor.execute("UPDATE contas SET ativa = FALSE WHERE id = %s AND user_id = %s", (conta_id, user_id))
         rowcount = cursor.rowcount
     db.commit()
     return jsonify({'message': 'Conta desativada com sucesso'}) if rowcount > 0 else (jsonify({'error': 'Conta não encontrada'}), 404)
@@ -188,7 +176,7 @@ def registrar_operacao():
     user_id, op_data = get_current_user_id(), request.get_json()
     db = get_db()
     try:
-        with db: # A conexão do psycopg2 gerencia a transação (commit/rollback)
+        with db:
             with db.cursor() as cursor:
                 operation_id = f"op_{int(datetime.now().timestamp())}"
                 for leg in op_data.get('legs', []):
