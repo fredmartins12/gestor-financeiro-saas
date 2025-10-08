@@ -94,25 +94,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // --- FUNÇÕES DE API ---
-    async function apiRequest(endpoint, method = 'GET', body = null) {
-        const options = { method, headers: { 'Content-Type': 'application/json' } };
-        if (body) options.body = JSON.stringify(body);
-        const response = await fetch(endpoint, options);
-        if (response.status === 401) {
-            window.location.href = '/login';
-            return;
-        }
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-        }
-        const contentType = response.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-            return response.json();
-        } else {
-            return { message: 'Success' };
-        }
-    }
+    async function apiRequest(endpoint, method = 'GET', body = null) { const options = { method, headers: { 'Content-Type': 'application/json' } }; if (body) options.body = JSON.stringify(body); const response = await fetch(endpoint, options); if (!response.ok) { const errorData = await response.json(); throw new Error(errorData.error || `HTTP error! status: ${response.status}`); } const contentType = response.headers.get("content-type"); if (contentType && contentType.includes("application/json")) { return response.json(); } else { return { message: 'Success' }; } }
 
     // --- FUNÇÕES DE UI E UTILITÁRIOS ---
     const formatCurrency = (value) => `R$ ${(typeof value === 'number' ? value : 0).toFixed(2).replace('.', ',')}`; const floorToTwoDecimals = (num) => { const numAsFloat = parseFloat(num); if (isNaN(numAsFloat)) return 0; return Math.floor(numAsFloat * 100) / 100; }; function showToast(message, type = 'success') { const toastContainer = document.getElementById('toast-container'); const toast = document.createElement('div'); toast.className = `toast ${type}`; toast.textContent = message; toastContainer.appendChild(toast); setTimeout(() => toast.remove(), 5000); } function setupModal(modalElement) { const controller = { element: modalElement, open: () => modalElement.classList.add('flex'), close: () => modalElement.classList.remove('flex'), }; modalElement.addEventListener('click', (e) => { if (e.target === modalElement || e.target.closest('.cancel-modal-btn')) controller.close(); }); return controller; }
