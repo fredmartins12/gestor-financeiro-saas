@@ -1,6 +1,6 @@
 import os
 import psycopg2
-import psycopg2.extras  # Essencial para retornar linhas como dicionários
+import psycopg2.extras # Essencial para retornar linhas como dicionários
 import json
 import csv
 import io
@@ -11,15 +11,16 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, curren
 
 # --- Configuração Inicial ---
 app = Flask(__name__)
+# A chave secreta agora é lida do ambiente, com um valor padrão para testes locais
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', '564312')
-DATABASE_URL = os.environ.get('DATABASE_URL')  # URL do PostgreSQL no ambiente
+DATABASE_URL = os.environ.get('DATABASE_URL') # Pega a URL do banco de dados do ambiente do Render
 
 # --- Configuração do Flask-Login ---
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# --- Conexão com o Banco de Dados ---
+# --- Conexão com o Banco de Dados (PostgreSQL) ---
 def get_db():
     db = getattr(g, '_database', None)
     if db is None:
@@ -32,7 +33,7 @@ def close_connection(exception):
     if db is not None:
         db.close()
 
-# --- Modelo de Usuário ---
+# --- Modelo de Usuário para o Flask-Login ---
 class User(UserMixin):
     def __init__(self, id, email):
         self.id = id
@@ -58,6 +59,7 @@ def login():
         with get_db().cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
             cursor.execute("SELECT * FROM usuarios WHERE email = %s", (email,))
             user_row = cursor.fetchone()
+        
         if user_row and check_password_hash(user_row['senha_hash'], password):
             user = User(id=user_row['id'], email=user_row['email'])
             login_user(user)
@@ -77,12 +79,15 @@ def register():
         with db.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
             cursor.execute("SELECT id FROM usuarios WHERE email = %s", (email,))
             user_row = cursor.fetchone()
+
             if user_row:
                 flash('Este email já está cadastrado.', 'error')
                 return redirect(url_for('register'))
+            
             if len(password) < 8:
                 flash('A senha deve ter no mínimo 8 caracteres.', 'error')
                 return redirect(url_for('register'))
+
             password_hash = generate_password_hash(password, method='pbkdf2:sha256')
             cursor.execute("INSERT INTO usuarios (email, senha_hash) VALUES (%s, %s)", (email, password_hash))
         db.commit()
@@ -96,35 +101,42 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
-# --- Rota Principal ---
+# --- Rota Principal da Aplicação ---
 @app.route('/')
 @login_required
 def index():
     return render_template('index.html')
 
-# --- Função de Usuário Atual ---
+# --- Função de Autenticação para a API ---
 def get_current_user_id():
     return current_user.id
 
-# --- API Endpoints ---
+# --- API Endpoints (Protegidos) ---
+
 @app.route('/api/dados-iniciais', methods=['GET'])
 @login_required
 def get_dados_iniciais():
     user_id = get_current_user_id()
     db = get_db()
     with db.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-        cursor.execute("SELECT * FROM contas WHERE user_id = %s AND ativa = TRUE ORDER BY nome", (user_id,))
+        cursor.execute("SELECT * FROM contas WHERE user_id = %s AND ativa = 1 ORDER BY nome", (user_id,))
         contas = cursor.fetchall()
+
         cursor.execute("SELECT t.*, c.nome as nome_conta FROM transacoes t JOIN contas c ON t.conta_id = c.id WHERE t.user_id = %s AND t.tipo = 'bet_placed' AND t.detalhes->>'status' = 'ativa'", (user_id,))
         operacoes_ativas = cursor.fetchall()
+
         cursor.execute("SELECT t.*, c.nome as nome_conta FROM transacoes t JOIN contas c ON t.conta_id = c.id WHERE t.user_id = %s ORDER BY t.data_criacao DESC LIMIT 30", (user_id,))
         historico = cursor.fetchall()
+
         now = datetime.now()
         start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        
         cursor.execute("SELECT SUM(CASE WHEN valor > 0 THEN valor ELSE 0 END) as entradas, SUM(CASE WHEN valor < 0 THEN valor ELSE 0 END) as saidas FROM transacoes WHERE user_id = %s AND data_criacao >= %s AND tipo NOT IN ('bet_placed', 'bet_won')", (user_id, start_of_month))
         resumo_mes_transacoes = cursor.fetchone()
+
         cursor.execute("SELECT SUM(valor) as lucro_prejuizo FROM transacoes WHERE user_id = %s AND data_criacao >= %s AND tipo IN ('bet_placed', 'bet_won')", (user_id, start_of_month))
         lucro_prejuizo_mes = cursor.fetchone()['lucro_prejuizo'] or 0
+
     return jsonify({
         'contas': [dict(row) for row in contas], 
         'operacoesAtivas': [dict(row) for row in operacoes_ativas], 
@@ -165,107 +177,10 @@ def deactivate_conta(conta_id):
     user_id = get_current_user_id()
     db = get_db()
     with db.cursor() as cursor:
-        cursor.execute("UPDATE contas SET ativa = FALSE WHERE id = %s AND user_id = %s", (conta_id, user_id))
+        cursor.execute("UPDATE contas SET ativa = 0 WHERE id = %s AND user_id = %s", (conta_id, user_id))
         rowcount = cursor.rowcount
     db.commit()
     return jsonify({'message': 'Conta desativada com sucesso'}) if rowcount > 0 else (jsonify({'error': 'Conta não encontrada'}), 404)
-
-@app.route('/api/transacoes', methods=['GET'])
-@login_required
-def listar_transacoes():
-    user_id = get_current_user_id()
-    db = get_db()
-    with db.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-        cursor.execute("SELECT t.*, c.nome AS nome_conta FROM transacoes t JOIN contas c ON t.conta_id = c.id WHERE t.user_id = %s ORDER BY t.data_criacao DESC", (user_id,))
-        transacoes = [dict(row) for row in cursor.fetchall()]
-    return jsonify(transacoes)
-
-# Criar transação genérica
-@app.route('/api/transacoes', methods=['POST'])
-@login_required
-def criar_transacao():
-    user_id, data = get_current_user_id(), request.get_json()
-    conta_id = data.get('accountId')
-    tipo = data.get('type')
-    valor = float(data.get('amount'))
-    descricao = data.get('description')
-    valor_real = valor if tipo in ['deposit', 'bonus', 'other_credit'] else -valor
-    db = get_db()
-    try:
-        with db:
-            with db.cursor() as cursor:
-                cursor.execute("UPDATE contas SET saldo = saldo + %s WHERE id = %s AND user_id = %s", (valor_real, conta_id, user_id))
-                if cursor.rowcount == 0:
-                    return jsonify({'error': 'Conta não encontrada'}), 404
-                cursor.execute("INSERT INTO transacoes (conta_id, user_id, tipo, valor, descricao) VALUES (%s, %s, %s, %s, %s)",
-                               (conta_id, user_id, tipo, valor_real, descricao))
-        return jsonify({'message': 'Transação registrada com sucesso!'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-# Editar transação existente
-@app.route('/api/transacoes/<int:transacao_id>', methods=['PUT'])
-@login_required
-def editar_transacao(transacao_id):
-    user_id, data = get_current_user_id(), request.get_json()
-    db = get_db()
-    try:
-        with db:
-            with db.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                cursor.execute("SELECT * FROM transacoes WHERE id = %s AND user_id = %s", (transacao_id, user_id))
-                transacao = cursor.fetchone()
-                if not transacao:
-                    return jsonify({'error': 'Transação não encontrada'}), 404
-                # Reverter valor antigo antes de atualizar
-                cursor.execute("UPDATE contas SET saldo = saldo - %s WHERE id = %s", (transacao['valor'], transacao['conta_id']))
-                # Atualiza os dados
-                novo_valor = float(data.get('amount', transacao['valor']))
-                tipo = data.get('type', transacao['tipo'])
-                valor_real = novo_valor if tipo in ['deposit', 'bonus', 'other_credit'] else -novo_valor
-                descricao = data.get('description', transacao['descricao'])
-                cursor.execute("UPDATE transacoes SET tipo = %s, valor = %s, descricao = %s WHERE id = %s",
-                               (tipo, valor_real, descricao, transacao_id))
-                # Aplicar novo valor no saldo
-                cursor.execute("UPDATE contas SET saldo = saldo + %s WHERE id = %s", (valor_real, transacao['conta_id']))
-        return jsonify({'message': 'Transação atualizada com sucesso!'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-# Deletar / reverter transação
-@app.route('/api/transacoes/<int:transacao_id>', methods=['DELETE'])
-@login_required
-def deletar_transacao(transacao_id):
-    user_id = get_current_user_id()
-    db = get_db()
-    try:
-        with db:
-            with db.cursor(cursor_factory=psycopg2.extras.DictCursor) as cursor:
-                cursor.execute("SELECT * FROM transacoes WHERE id = %s AND user_id = %s", (transacao_id, user_id))
-                transacao = cursor.fetchone()
-                if not transacao:
-                    return jsonify({'error': 'Transação não encontrada'}), 404
-
-                detalhes = transacao['detalhes'] or {}
-                operation_id = detalhes.get('operationId')
-
-                if operation_id:
-                    # Reverter todas as apostas relacionadas à operação, somente da conta da transação
-                    cursor.execute("SELECT * FROM transacoes WHERE user_id = %s AND detalhes->>'operationId' = %s AND conta_id = %s", (user_id, operation_id, transacao['conta_id']))
-                    apostas_relacionadas = cursor.fetchall()
-                    for aposta in apostas_relacionadas:
-                        aposta_detalhes = aposta['detalhes'] or {}
-                        valor = aposta['valor']
-                        cursor.execute("UPDATE contas SET saldo = saldo - %s WHERE id = %s", (valor, aposta['conta_id']))
-                        if aposta['tipo'] == 'bet_placed' and aposta_detalhes.get('isFreebet'):
-                            cursor.execute("UPDATE contas SET saldo_freebets = saldo_freebets + %s WHERE id = %s", (aposta_detalhes.get('stake', 0), aposta['conta_id']))
-                        cursor.execute("DELETE FROM transacoes WHERE id = %s", (aposta['id'],))
-                else:
-                    # Reverter saldo normal
-                    cursor.execute("UPDATE contas SET saldo = saldo - %s WHERE id = %s", (transacao['valor'], transacao['conta_id']))
-                    cursor.execute("DELETE FROM transacoes WHERE id = %s", (transacao_id,))
-        return jsonify({'message': 'Transação revertida com sucesso!'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/operacoes', methods=['POST'])
 @login_required
@@ -273,7 +188,7 @@ def registrar_operacao():
     user_id, op_data = get_current_user_id(), request.get_json()
     db = get_db()
     try:
-        with db:
+        with db: # A conexão do psycopg2 gerencia a transação (commit/rollback)
             with db.cursor() as cursor:
                 operation_id = f"op_{int(datetime.now().timestamp())}"
                 for leg in op_data.get('legs', []):
@@ -564,3 +479,4 @@ def csv_template():
     )
 
 if __name__ == '__main__':
+    app.run(debug=True)
