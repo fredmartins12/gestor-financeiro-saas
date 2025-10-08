@@ -477,36 +477,6 @@ def csv_template():
         mimetype="text/csv",
         headers={"Content-disposition": "attachment; filename=modelo_contas.csv"}
     )
-@app.route('/cria_banco_de_dados_secreto')
-def cria_banco_de_dados():
-    db = get_db()
-    try:
-        with db.cursor() as cursor:
-            # Abre o arquivo schema.sql
-            with open('schema.sql', 'r', encoding='utf-8') as f:
-                sql_content = f.read()
-
-            # Separa cada statement pelo ';'
-            statements = sql_content.split(';')
-            for statement in statements:
-                stmt = statement.strip()
-                if stmt:  # ignora strings vazias
-                    try:
-                        cursor.execute(stmt + ';')
-                    except psycopg2.errors.DuplicateTable:
-                        # Tabela já existe, ignora
-                        db.rollback()  # necessário para continuar após erro
-                    except Exception as e:
-                        db.rollback()
-                        return f"Erro ao executar statement: {stmt}\n{str(e)}", 500
-        db.commit()
-        return "Banco de dados e tabelas criados com sucesso!"
-    except FileNotFoundError:
-        return "Arquivo schema.sql não encontrado no diretório da aplicação.", 500
-    except Exception as e:
-        db.rollback()
-        return f"Erro inesperado: {str(e)}", 500
-
 
 if __name__ == '__main__':
     app.run(debug=True)
